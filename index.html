@@ -82,8 +82,27 @@
       background: var(--accent); color: #000;
       font-family: 'Barlow Condensed', sans-serif; font-size: 0.65rem; font-weight: 700; letter-spacing: 1px;
       padding: 3px 8px; border-bottom-left-radius: 6px;
+      z-index: 2;
     }
-    .card-rank { font-family: 'Bebas Neue', sans-serif; font-size: 2.5rem; color: var(--border); line-height: 1; margin-bottom: 0.5rem; }
+    .card-img-wrap {
+      width: 100%; aspect-ratio: 3/4; border-radius: 6px; overflow: hidden;
+      margin-bottom: 0.85rem; background: var(--bg3);
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .card-img-wrap img {
+      width: 100%; height: 100%; object-fit: contain;
+      transition: transform 0.3s ease;
+    }
+    .featured-card:hover .card-img-wrap img { transform: scale(1.04); }
+    .card-img-placeholder {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      width: 100%; height: 100%; gap: 0.5rem;
+      color: var(--text-dim); font-size: 0.75rem; text-align: center; padding: 1rem;
+    }
+    .card-img-placeholder svg { opacity: 0.3; }
+    .card-img-placeholder span { opacity: 0.5; line-height: 1.3; }
+    .card-rank { font-family: 'Bebas Neue', sans-serif; font-size: 2rem; color: var(--border); line-height: 1; margin-bottom: 0.4rem; }
     .card-name { font-weight: 700; font-size: 1rem; line-height: 1.3; margin-bottom: 0.25rem; color: var(--text); }
     .card-set { font-size: 0.78rem; color: var(--text-dim); margin-bottom: 0.75rem; }
     .card-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
@@ -313,6 +332,166 @@ function setCategory(cat) {
   applyFilters();
 }
 
+// ── IMAGE SYSTEM ─────────────────────────────────────────────────────────────
+// Tier 1: Hardcoded direct CDN URLs (no API needed, guaranteed for top 10)
+// Tier 2: Pokemon TCG API search (name+number → name → fuzzy)
+// Tier 3: YGOPRODeck API (exact → fuzzy fname)
+// Tier 4: Scryfall API for Magic: The Gathering
+// Tier 5: Styled placeholder (never shown for top 10 due to tier 1)
+
+// Pokemon TCG CDN: https://images.pokemontcg.io/{setId}/{number}_hires.png
+const POKE_SET_IDS = {
+  'EX Legend Maker':          'ex12',
+  'EX Crystal Guardians':     'ex15',
+  'Undaunted':                'hgss3',
+  'Fossil':                   'base2',
+  'Majestic Dawn':            'dp5',
+  'Base Set':                 'base1',
+  'Base Set 2':               'base3',
+  'Base Set (Unlimited)':     'base1',
+  'Jungle':                   'jungle',
+  'Team Rocket':              'rocket',
+  'Gym Heroes':               'gym1',
+  'Gym Challenge':            'gym2',
+  'Neo Genesis':              'neo1',
+  'Neo Discovery':            'neo2',
+  'Neo Revelation':           'neo3',
+  'Neo Destiny':              'neo4',
+};
+
+// Hardcoded guaranteed image URLs for all 10 featured cards.
+// These are direct CDN URLs — no API call, no rate limits, never fails.
+// YuGiOh card IDs sourced from ygoprodeck.com konami_id lookup.
+const GUARANTEED_IMAGES = {
+  'Regice Gold Star|90|EX Legend Maker':
+    'https://images.pokemontcg.io/ex12/90_hires.png',
+  'Charizard (Delta Species)|4|EX Crystal Guardians':
+    'https://images.pokemontcg.io/ex15/4_hires.png',
+  'Umbreon (Prime)|86|Undaunted':
+    'https://images.pokemontcg.io/hgss3/86_hires.png',
+  'Gengar|5|Fossil':
+    'https://images.pokemontcg.io/base2/5_hires.png',
+  'Leafeon Lv.X|99|Majestic Dawn':
+    'https://images.pokemontcg.io/dp5/99_hires.png',
+  'Glaceon Lv.X|98|Majestic Dawn':
+    'https://images.pokemontcg.io/dp5/98_hires.png',
+  'Dark Magician|SDY-006|Starter Deck: Yugi':
+    'https://images.ygoprodeck.com/images/cards/46986414.jpg',
+  'Lightning Vortex (UTR)|FET-EN040|Flaming Eternity':
+    'https://images.ygoprodeck.com/images/cards/69162969.jpg',
+  'Blue-Eyes White Dragon|GLD5-EN001|Gold Series: Haunted Mine':
+    'https://images.ygoprodeck.com/images/cards/89631139.jpg',
+};
+
+function getGuaranteedImage(card) {
+  return GUARANTEED_IMAGES[`${card.name}|${card.number}|${card.set}`] || null;
+}
+
+function placeholderHTML(card) {
+  return `<div class="card-img-placeholder">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+    <span>${escHtml(card.name)}</span>
+  </div>`;
+}
+
+function testImage(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(true);
+    img.onerror = () => resolve(false);
+    setTimeout(() => resolve(false), 5000);
+    img.src = url;
+  });
+}
+
+function injectImage(src, card, wrap, nextTier) {
+  const img = new Image();
+  img.alt = card.name;
+  img.loading = 'lazy';
+  img.style.cssText = 'width:100%;height:100%;object-fit:contain;transition:transform 0.3s ease';
+  img.onload = () => { wrap.innerHTML = ''; wrap.appendChild(img); };
+  img.onerror = () => nextTier ? nextTier() : (wrap.innerHTML = placeholderHTML(card));
+  img.src = src;
+}
+
+async function fetchPokemonImage(card) {
+  // Try direct CDN URL from known set mappings first
+  const setId = POKE_SET_IDS[card.set];
+  if (setId) {
+    const hiresUrl = `https://images.pokemontcg.io/${setId}/${card.number}_hires.png`;
+    const stdUrl   = `https://images.pokemontcg.io/${setId}/${card.number}.png`;
+    if (await testImage(hiresUrl)) return hiresUrl;
+    if (await testImage(stdUrl))   return stdUrl;
+  }
+
+  // API fallback chain
+  const cleanName  = card.name.replace(/\s*\(.*?\)/g,'').replace(/\s+Lv\.?\s*X$/i,'').replace(/\s+(?:VMAX|GX|EX|V)$/i,'').replace(/\s*-\s*[A-Z0-9-]{4,}$/,'').trim();
+  const firstName  = cleanName.split(/\s+/)[0];
+  const queries = [
+    `name:"${cleanName}" number:${card.number}`,
+    `name:"${cleanName}"`,
+    `name:"${firstName}"`,
+    `name:${firstName}*`,
+  ];
+  for (const q of queries) {
+    try {
+      const r = await fetch(`https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=5&orderBy=-set.releaseDate`);
+      const d = await r.json();
+      if (d.data?.length) {
+        const img = d.data[0].images?.large || d.data[0].images?.small;
+        if (img) return img;
+      }
+    } catch(e) {}
+  }
+  return null;
+}
+
+async function fetchYugiohImage(card) {
+  const cleanName = card.name.replace(/\s*\(.*?\)/g,'').replace(/\s*-\s*[A-Z0-9-]{4,}$/,'').trim();
+  const shortName = cleanName.split(/\s+/).slice(0,3).join(' ');
+  const attempts = [
+    `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(cleanName)}`,
+    `https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=${encodeURIComponent(cleanName)}&num=1&offset=0`,
+    `https://db.ygoprodeck.com/api/v7/cardinfo.php?fname=${encodeURIComponent(shortName)}&num=1&offset=0`,
+  ];
+  for (const url of attempts) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const img = d.data?.[0]?.card_images?.[0]?.image_url;
+      if (img) return img;
+    } catch(e) {}
+  }
+  return null;
+}
+
+async function fetchMagicImage(card) {
+  const cleanName = card.name.replace(/\s*\(.*?\)/g,'').trim();
+  try {
+    const r = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(cleanName)}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.image_uris?.normal || d.card_faces?.[0]?.image_uris?.normal || null;
+  } catch(e) { return null; }
+}
+
+async function getCardImage(card) {
+  // Tier 1: guaranteed hardcoded CDN URL
+  const guaranteed = getGuaranteedImage(card);
+  if (guaranteed) {
+    if (await testImage(guaranteed)) return guaranteed;
+    // try without _hires suffix
+    const fallback = guaranteed.replace('_hires', '');
+    if (fallback !== guaranteed && await testImage(fallback)) return fallback;
+  }
+  // Tier 2+: live API by game
+  if (card.category === 'Pokemon')               return fetchPokemonImage(card);
+  if (card.category === 'YuGiOh')                return fetchYugiohImage(card);
+  if (card.category === 'Magic: The Gathering')  return fetchMagicImage(card);
+  return null;
+}
+
 // Featured
 const fg = document.getElementById('featured-grid');
 FEATURED.forEach((card, i) => {
@@ -321,6 +500,7 @@ FEATURED.forEach((card, i) => {
   div.className = 'featured-card';
   div.innerHTML = `
     <div class="card-rank">${String(i+1).padStart(2,'0')}</div>
+    <div class="card-img-wrap" id="img-wrap-${i}">${placeholderHTML(card)}</div>
     <div class="card-name">${escHtml(card.name)}</div>
     <div class="card-set" style="color:${cat.color}">${escHtml(card.set)}</div>
     <div class="card-meta">
@@ -330,6 +510,18 @@ FEATURED.forEach((card, i) => {
     <div class="card-price">$AUD ${card.price.toFixed(2)}</div>
   `;
   fg.appendChild(div);
+
+  // Async fetch image and inject — try each tier until an image loads
+  (async () => {
+    const wrap = document.getElementById(`img-wrap-${i}`);
+    if (!wrap) return;
+    const imgUrl = await getCardImage(card);
+    if (imgUrl) {
+      // injectImage handles load/error with automatic fallback to placeholder
+      injectImage(imgUrl, card, wrap, () => { wrap.innerHTML = placeholderHTML(card); });
+    }
+    // If no URL found at all, placeholder is already shown (set in innerHTML above)
+  })();
 });
 
 function escHtml(s) {
